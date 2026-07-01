@@ -33,11 +33,7 @@ The adult transmitter file is optional, but Question 4 needs it.
 Open a terminal in this folder and run:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-shiny run --reload app.py
+./run_app.sh
 ```
 
 Then open the local link printed in the terminal, usually:
@@ -49,7 +45,30 @@ http://127.0.0.1:8000
 On Windows, activate the environment with:
 
 ```bash
-.venv\Scripts\activate
+run_app.bat
+```
+
+## If The Interface Does Not Launch
+
+Run the setup check:
+
+```bash
+source .venv/bin/activate
+python check_setup.py
+```
+
+The dashboard should use Python 3.11 or 3.12. Python 3.14 can make Pandas/Numpy imports stall on some machines.
+
+If setup is broken, recreate the environment with Python 3.12:
+
+```bash
+rm -rf .venv
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python check_setup.py
+python -m shiny run --host 127.0.0.1 --port 8000 app.py
 ```
 
 ## How To Use
