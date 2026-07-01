@@ -1,0 +1,7 @@
+pandas
+openpyxl
+numpy
+matplotlib
+seaborn
+shiny==1.6.3
+

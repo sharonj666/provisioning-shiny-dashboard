@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.ipynb_checkpoints/
+~$*
+
+# Do not publish raw field data by accident.
+data/raw/*.xlsx
+data/raw/*.csv
+
+# Local/generated output packages.
+results/
+reports/
+*.zip
+
