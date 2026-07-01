@@ -40,6 +40,52 @@ def validate_inputs(
     return ValidationResult(is_valid=not errors, errors=errors, warnings=warnings)
 
 
+def validate_multiple_inputs(
+    provisioning_workbooks: list[Path],
+    metadata_csv: Path | None,
+    transmitter_workbooks: list[Path],
+    provisioning_names: list[str] | None = None,
+    transmitter_names: list[str] | None = None,
+) -> ValidationResult:
+    errors: list[str] = []
+    warnings: list[str] = []
+    provisioning_names = provisioning_names or [path.name for path in provisioning_workbooks]
+    transmitter_names = transmitter_names or [path.name for path in transmitter_workbooks]
+
+    if not provisioning_workbooks:
+        errors.append("Upload at least one provisioning workbook.")
+    if metadata_csv is None:
+        errors.append("Upload the provisioning metadata CSV.")
+    if not transmitter_workbooks:
+        warnings.append("Adult transmitter files were not uploaded. Feeding-rate-by-tagged-status analysis will not run.")
+
+    for path, name in zip(provisioning_workbooks, provisioning_names, strict=False):
+        local_errors: list[str] = []
+        local_warnings: list[str] = []
+        _validate_provisioning_workbook(path, local_errors, local_warnings)
+        errors.extend(f"{name}: {message}" for message in local_errors)
+        warnings.extend(f"{name}: {message}" for message in local_warnings)
+    if metadata_csv is not None:
+        _validate_metadata_csv(metadata_csv, errors)
+    for path, name in zip(transmitter_workbooks, transmitter_names, strict=False):
+        local_errors = []
+        local_warnings = []
+        _validate_transmitter_workbook(path, local_errors, local_warnings)
+        errors.extend(f"{name}: {message}" for message in local_errors)
+        warnings.extend(f"{name}: {message}" for message in local_warnings)
+
+    duplicate_provisioning = sorted(
+        {name for name in provisioning_names if provisioning_names.count(name) > 1}
+    )
+    if duplicate_provisioning:
+        warnings.append(
+            "Duplicate provisioning filenames were uploaded: "
+            + ", ".join(duplicate_provisioning)
+        )
+
+    return ValidationResult(is_valid=not errors, errors=errors, warnings=warnings)
+
+
 def _validate_provisioning_workbook(path: Path, errors: list[str], warnings: list[str]) -> None:
     if path.suffix.lower() != ".xlsx":
         errors.append("Provisioning workbook must be an .xlsx file.")
@@ -111,4 +157,3 @@ def _validate_transmitter_workbook(path: Path, errors: list[str], warnings: list
         errors.append(f"Adult transmitter Sheet1 is missing required columns: {', '.join(missing)}")
     if data.empty:
         warnings.append("Adult transmitter Sheet1 appears to be empty.")
-

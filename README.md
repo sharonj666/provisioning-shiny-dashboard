@@ -1,6 +1,6 @@
 # Provisioning Analysis Dashboard
 
-This Shiny app lets a nontechnical user upload raw provisioning files and generate the provisioning analysis without writing Python code.
+This Shiny app lets a user upload one or more raw provisioning files and generate the provisioning analysis without writing Python code.
 
 ## What The App Does
 
@@ -13,6 +13,8 @@ After you upload the files and click **Run analysis**, the dashboard creates:
 - tagged-parent versus untagged-parent provisioning summaries;
 - ambiguous parent-status review table;
 - downloadable CSV result package.
+- cross-year and cross-species comparisons;
+- selectable CSV and PNG figure downloads.
 
 ## Files You Need
 
@@ -52,13 +54,13 @@ On Windows, activate the environment with:
 
 ## How To Use
 
-1. Upload the provisioning workbook.
-2. Upload the metadata CSV.
-3. Upload the adult transmitter workbook if you want Question 4.
-4. Check the validation messages.
-5. Click **Run analysis**.
-6. Review the tabs.
-7. Use the download buttons to save the result tables.
+1. Choose a single-year, cross-year, or cross-species analysis.
+2. Upload one or more provisioning workbooks.
+3. Upload the shared metadata CSV.
+4. Upload adult transmitter workbooks if you want the tagged-status analysis.
+5. Check the validation messages and click **Generate analysis**.
+6. Use the global year and species controls to refine the comparison.
+7. Review the analysis tabs and choose CSVs or PNG figures from **Downloads**.
 
 ## Important Notes
 
@@ -92,4 +94,3 @@ python -m pip install -r requirements.txt --no-cache-dir
 ```
 
 If the app does not start, recreate the environment with Python 3.11 or 3.12.
-

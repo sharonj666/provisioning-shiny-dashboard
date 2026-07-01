@@ -123,9 +123,15 @@ def classify_parent_status_factory(tagged_pfr_codes: set[str]):
 def analyze_tagged_parent_rates(
     stints: pd.DataFrame,
     deliveries: pd.DataFrame,
-    transmitter_path: Path,
+    transmitter_path: Path | list[Path],
 ) -> dict[str, pd.DataFrame]:
-    adult_lookup = read_adult_transmitter_lookup(transmitter_path)
+    paths = [transmitter_path] if isinstance(transmitter_path, Path) else list(transmitter_path)
+    adult_frames = []
+    for path in paths:
+        frame = read_adult_transmitter_lookup(path)
+        frame.insert(0, "source_transmitter_workbook", path.name)
+        adult_frames.append(frame)
+    adult_lookup = pd.concat(adult_frames, ignore_index=True)
     tagged_nest_keys = set(
         adult_lookup[["species_norm", "year", "nest_match_key"]]
         .dropna()
@@ -287,4 +293,3 @@ def analyze_tagged_parent_rates(
         "tagged_parent_vs_untagged_parent_rates_outliers": parent_outliers,
         "tagged_parent_analysis_quality_summary": quality,
     }
-

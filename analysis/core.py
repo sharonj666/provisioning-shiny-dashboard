@@ -10,13 +10,13 @@ from tempfile import TemporaryDirectory
 
 import pandas as pd
 
-from scripts.clean_data import CleanedTables, clean_all
+from scripts.clean_data import CleanedTables, clean_all_workbooks
 
 from .statistics import summarize_metric
 from .tagged_parents import analyze_tagged_parent_rates
 
 
-UNKNOWN_PREY_CATEGORIES = {"U", "UNKNOWN", "OTHER"}
+UNKNOWN_PREY_CATEGORIES = {"UNKNOWN", "OTHER"}
 
 
 @dataclass
@@ -43,10 +43,10 @@ def analyze_diet_composition(
     if identified_fish_only:
         events = events[
             events["is_fish"].astype(str).str.lower().isin(["true", "1"])
-            & ~events["prey_species"].fillna("UNKNOWN").astype(str).str.upper().isin(UNKNOWN_PREY_CATEGORIES)
+            & ~events["prey_species"].fillna("Unknown").astype(str).str.upper().isin(UNKNOWN_PREY_CATEGORIES)
         ].copy()
 
-    events["prey_species"] = events["prey_species"].fillna("UNKNOWN").astype(str).str.upper()
+    events["prey_species"] = events["prey_species"].fillna("Unknown").astype(str)
     diet_counts = (
         events.groupby(["year", "species", "prey_species"], dropna=False)
         .size()
@@ -108,14 +108,22 @@ def analyze_fish_delivery_rate(stints: pd.DataFrame) -> dict[str, pd.DataFrame]:
 
 def build_quality_tables(cleaned: CleanedTables) -> dict[str, pd.DataFrame]:
     stints = cleaned.stints
+    valid_duration = stints.get(
+        "valid_observation_duration",
+        pd.Series(False, index=stints.index, dtype=bool),
+    ).fillna(False)
+    valid_chicks = stints.get(
+        "valid_chick_count",
+        pd.Series(False, index=stints.index, dtype=bool),
+    ).fillna(False)
     quality = pd.DataFrame(cleaned.quality.items(), columns=["metric", "value"])
     excluded = pd.DataFrame(
         {
             "analysis": ["prey delivered per hour", "fish per hour", "fish per chick-hour"],
             "excluded_rows": [
-                int((~stints["valid_observation_duration"]).sum()),
-                int((~stints["valid_observation_duration"]).sum()),
-                int((~(stints["valid_observation_duration"] & stints["valid_chick_count"])).sum()),
+                int((~valid_duration).sum()),
+                int((~valid_duration).sum()),
+                int((~(valid_duration & valid_chicks)).sum()),
             ],
             "reason": [
                 "missing or invalid observation duration",
@@ -131,11 +139,17 @@ def build_quality_tables(cleaned: CleanedTables) -> dict[str, pd.DataFrame]:
 
 
 def build_complete_analysis(
-    provisioning_workbook: Path,
+    provisioning_workbook: Path | list[Path],
     metadata_csv: Path,
-    transmitter_workbook: Path | None = None,
+    transmitter_workbook: Path | list[Path] | None = None,
+    source_names: list[str] | None = None,
 ) -> AnalysisResults:
-    cleaned = clean_all(provisioning_workbook, metadata_csv)
+    workbooks = (
+        [provisioning_workbook]
+        if isinstance(provisioning_workbook, Path)
+        else list(provisioning_workbook)
+    )
+    cleaned = clean_all_workbooks(workbooks, metadata_csv, source_names=source_names)
     tables: dict[str, pd.DataFrame] = {}
     tables.update(build_quality_tables(cleaned))
     tables.update(analyze_prey_delivery_rate(cleaned.stints))
@@ -146,6 +160,77 @@ def build_complete_analysis(
     if transmitter_workbook is not None:
         tables.update(analyze_tagged_parent_rates(cleaned.stints, cleaned.deliveries, transmitter_workbook))
 
+    return AnalysisResults(cleaned=cleaned, tables=tables)
+
+
+def filter_analysis_results(
+    results: AnalysisResults,
+    years: list[int] | None = None,
+    species: list[str] | None = None,
+) -> AnalysisResults:
+    """Filter every year/species-aware result without changing its schema."""
+    year_set = {int(value) for value in years or []}
+    species_set = {str(value) for value in species or []}
+
+    def filtered(frame: pd.DataFrame) -> pd.DataFrame:
+        output = frame.copy()
+        if year_set and "year" in output:
+            numeric_year = pd.to_numeric(output["year"], errors="coerce")
+            output = output[numeric_year.isin(year_set)]
+        if species_set and "species" in output:
+            output = output[output["species"].astype(str).isin(species_set)]
+        return output.reset_index(drop=True)
+
+    stints = filtered(results.cleaned.stints)
+    deliveries = filtered(results.cleaned.deliveries)
+    records_with_zeros = filtered(results.cleaned.records_with_zeros)
+    quality = {
+        "source_workbooks": int(
+            stints["source_workbook"].nunique()
+            if "source_workbook" in stints
+            else results.cleaned.quality.get("source_workbooks", 1)
+        ),
+        "observation_stints": int(len(stints)),
+        "prey_delivery_records": int(len(deliveries)),
+        "zero_delivery_stints": int(
+            stints.get(
+                "zero_delivery_stint",
+                pd.Series(False, index=stints.index, dtype=bool),
+            ).fillna(False).sum()
+        ),
+        "missing_or_invalid_start_stop": int(
+            (~stints.get(
+                "valid_observation_duration",
+                pd.Series(False, index=stints.index, dtype=bool),
+            ).fillna(False)).sum()
+        ),
+        "missing_chick_counts": int(
+            stints.get(
+                "chick_count",
+                pd.Series(index=stints.index, dtype=float),
+            ).isna().sum()
+        ),
+        "missing_or_unknown_prey_species": int(
+            deliveries.get("prey_species", pd.Series(dtype=str))
+            .astype("string")
+            .str.casefold()
+            .eq("unknown")
+            .sum()
+        ),
+        "delivery_rows_not_matched_to_stint": int(
+            deliveries.get("stint_id", pd.Series(dtype=object)).isna().sum()
+        ),
+    }
+    cleaned = CleanedTables(
+        stints=stints,
+        deliveries=deliveries,
+        records_with_zeros=records_with_zeros,
+        metadata=results.cleaned.metadata.copy(),
+        telemetry=filtered(results.cleaned.telemetry),
+        quality=quality,
+    )
+    tables = {name: filtered(table) for name, table in results.tables.items()}
+    tables.update(build_quality_tables(cleaned))
     return AnalysisResults(cleaned=cleaned, tables=tables)
 
 
@@ -169,4 +254,3 @@ def make_results_zip(results: AnalysisResults) -> bytes:
         write_result_tables(results, package_dir)
         zip_path = shutil.make_archive(str(package_dir), "zip", package_dir)
         return Path(zip_path).read_bytes()
-

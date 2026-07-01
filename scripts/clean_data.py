@@ -23,6 +23,18 @@ RAW_WORKBOOK = Path("2025 PROVISIONING DATA ENTRY.xlsx")
 RAW_METADATA = Path("PROV METADATA(Sheet1).csv")
 OUTPUT_DIR = Path("data/cleaned")
 
+PREY_NAME_MAP = {
+    "A": "Ammodytes",
+    "H": "Herring",
+    "BA": "Bay Anchovy",
+    "S": "Silversides",
+    "M": "Mackerel",
+    "U": "Unknown",
+    "UNKNOWN": "Unknown",
+    "O": "Other",
+    "OTHER": "Other",
+}
+
 SESSION_COLUMNS = [
     "date",
     "species",
@@ -78,6 +90,15 @@ def clean_code(value: object) -> object:
     if pd.isna(text):
         return pd.NA
     return str(text).upper()
+
+
+def normalize_prey_name(value: object) -> str:
+    """Return a report-ready prey name while preserving unrecognized labels."""
+    text = clean_text(value)
+    if pd.isna(text):
+        return "Unknown"
+    cleaned = str(text).strip()
+    return PREY_NAME_MAP.get(cleaned.upper(), cleaned)
 
 
 def normalize_nest(value: object) -> object:
@@ -318,7 +339,9 @@ def build_deliveries(df: pd.DataFrame, stints: pd.DataFrame) -> pd.DataFrame:
     deliveries["nest_match_key"] = deliveries["nest_id"].map(nest_match_key)
     deliveries["prey_size_numeric"] = pd.to_numeric(deliveries["prey_size"], errors="coerce")
     deliveries["is_fish"] = [classify_fish(a, b) for a, b in zip(deliveries["prey1"], deliveries["prey2"], strict=False)]
-    deliveries["prey_species"] = deliveries["prey2"].fillna(deliveries["prey1"]).fillna("UNKNOWN")
+    deliveries["prey_species"] = (
+        deliveries["prey2"].fillna(deliveries["prey1"]).map(normalize_prey_name)
+    )
     deliveries["delivery_count"] = 1
 
     stint_key = stints[["stint_id", "session_id", "session_key", "nest_match_key", "chick_count", "observation_hours"]]
@@ -428,7 +451,10 @@ def quality_report(stints: pd.DataFrame, deliveries: pd.DataFrame, raw_rows: pd.
         "zero_delivery_stints": int(stints["zero_delivery_stint"].sum()),
         "missing_or_invalid_start_stop": int((~stints["valid_observation_duration"]).sum()),
         "missing_chick_counts": int(stints["chick_count"].isna().sum()),
-        "missing_or_unknown_prey_species": int(deliveries["prey_species"].isna().sum() + deliveries["prey_species"].isin(["U", "UNKNOWN"]).sum()),
+        "missing_or_unknown_prey_species": int(
+            deliveries["prey_species"].isna().sum()
+            + deliveries["prey_species"].astype("string").str.casefold().eq("unknown").sum()
+        ),
         "delivery_rows_not_matched_to_stint": unmatched,
         "rows_excluded_from_rate_calculations": int((~stints["valid_observation_duration"]).sum()),
         "rows_excluded_from_chick_corrected_rates": int((~(stints["valid_observation_duration"] & stints["valid_chick_count"])).sum()),
@@ -451,9 +477,90 @@ def clean_all(workbook: Path, metadata_path: Path) -> CleanedTables:
     deliveries = build_deliveries(data_entry, stints)
     stints, records_with_zeros = build_records_with_zeros(stints, deliveries)
     metadata = read_metadata(metadata_path)
-    telemetry = clean_telemetry(read_workbook_sheet(workbook, "telem Banding for Lookup"))
+    workbook_sheets = pd.ExcelFile(workbook).sheet_names
+    telemetry = (
+        clean_telemetry(read_workbook_sheet(workbook, "telem Banding for Lookup"))
+        if "telem Banding for Lookup" in workbook_sheets
+        else pd.DataFrame()
+    )
     quality = quality_report(stints, deliveries, data_entry)
     return CleanedTables(stints, deliveries, records_with_zeros, metadata, telemetry, quality)
+
+
+def _source_scoped_table(
+    table: pd.DataFrame,
+    source_name: str,
+    source_index: int,
+) -> pd.DataFrame:
+    scoped = table.copy()
+    prefix = f"SRC{source_index:03d}"
+    scoped.insert(0, "source_workbook", source_name)
+    for column in ["session_id", "session_key", "stint_id", "delivery_id"]:
+        if column in scoped:
+            scoped[column] = scoped[column].map(
+                lambda value: value
+                if pd.isna(value)
+                else f"{prefix}-{value}"
+            )
+    return scoped
+
+
+def clean_all_workbooks(
+    workbooks: Iterable[Path],
+    metadata_path: Path,
+    source_names: Iterable[str] | None = None,
+) -> CleanedTables:
+    """Clean and safely combine one or more provisioning workbooks."""
+    workbook_list = list(workbooks)
+    if not workbook_list:
+        raise ValueError("At least one provisioning workbook is required.")
+    names = list(source_names or [path.name for path in workbook_list])
+    if len(names) != len(workbook_list):
+        raise ValueError("Each provisioning workbook must have one source name.")
+
+    cleaned_sets = [clean_all(path, metadata_path) for path in workbook_list]
+    stints = pd.concat(
+        [
+            _source_scoped_table(cleaned.stints, names[index], index + 1)
+            for index, cleaned in enumerate(cleaned_sets)
+        ],
+        ignore_index=True,
+    )
+    deliveries = pd.concat(
+        [
+            _source_scoped_table(cleaned.deliveries, names[index], index + 1)
+            for index, cleaned in enumerate(cleaned_sets)
+        ],
+        ignore_index=True,
+    )
+    records_with_zeros = pd.concat(
+        [
+            _source_scoped_table(cleaned.records_with_zeros, names[index], index + 1)
+            for index, cleaned in enumerate(cleaned_sets)
+        ],
+        ignore_index=True,
+    )
+    telemetry_frames = []
+    for index, cleaned in enumerate(cleaned_sets):
+        telemetry = cleaned.telemetry.copy()
+        telemetry.insert(0, "source_workbook", names[index])
+        telemetry_frames.append(telemetry)
+
+    quality_keys = set().union(*(cleaned.quality for cleaned in cleaned_sets))
+    quality = {
+        key: sum(int(cleaned.quality.get(key, 0)) for cleaned in cleaned_sets)
+        for key in sorted(quality_keys)
+    }
+    quality["source_workbooks"] = len(workbook_list)
+
+    return CleanedTables(
+        stints=stints,
+        deliveries=deliveries,
+        records_with_zeros=records_with_zeros,
+        metadata=cleaned_sets[0].metadata.copy(),
+        telemetry=pd.concat(telemetry_frames, ignore_index=True),
+        quality=quality,
+    )
 
 
 def main() -> None:

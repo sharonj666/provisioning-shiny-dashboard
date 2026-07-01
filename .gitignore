@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .DS_Store
 .ipynb_checkpoints/
+.cache/
 ~$*
 
 # Do not publish raw field data by accident.
@@ -13,4 +14,3 @@ data/raw/*.csv
 results/
 reports/
 *.zip
-
