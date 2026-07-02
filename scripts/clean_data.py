@@ -27,6 +27,7 @@ PREY_NAME_MAP = {
     "A": "Ammodytes",
     "H": "Herring",
     "BA": "Bay Anchovy",
+    "BU": "Butterfish",
     "S": "Silversides",
     "M": "Mackerel",
     "U": "Unknown",
@@ -339,9 +340,7 @@ def build_deliveries(df: pd.DataFrame, stints: pd.DataFrame) -> pd.DataFrame:
     deliveries["nest_match_key"] = deliveries["nest_id"].map(nest_match_key)
     deliveries["prey_size_numeric"] = pd.to_numeric(deliveries["prey_size"], errors="coerce")
     deliveries["is_fish"] = [classify_fish(a, b) for a, b in zip(deliveries["prey1"], deliveries["prey2"], strict=False)]
-    deliveries["prey_species"] = (
-        deliveries["prey2"].fillna(deliveries["prey1"]).map(normalize_prey_name)
-    )
+    deliveries["prey_species"] = deliveries["prey2"].map(normalize_prey_name)
     deliveries["delivery_count"] = 1
 
     stint_key = stints[["stint_id", "session_id", "session_key", "nest_match_key", "chick_count", "observation_hours"]]

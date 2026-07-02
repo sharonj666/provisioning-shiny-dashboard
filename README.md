@@ -62,6 +62,10 @@ On Windows, activate the environment with:
 6. Use the global year and species controls to refine the comparison.
 7. Review the analysis tabs and choose CSVs or PNG figures from **Downloads**.
 
+For a cross-year comparison, select at least two yearly provisioning workbooks
+in the upload dialog. The app combines them for the current browser session and
+keeps their observation, stint, and delivery identifiers distinct.
+
 ## Important Notes
 
 - Raw data files are not included in this GitHub bundle.

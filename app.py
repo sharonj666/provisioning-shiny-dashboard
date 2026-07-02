@@ -17,7 +17,7 @@ from shiny import App, reactive, render, ui
 
 from analysis.charts import (
     diet_bar,
-    diet_stacked_bar,
+    diet_comparison_stacked_bar,
     fish_rate_bar,
     fish_rate_box,
     prey_rate_box,
@@ -94,12 +94,15 @@ FIGURE_BUILDERS = {
         ),
         "Diet Composition: All Deliveries",
     ),
-    "diet_all_deliveries_stacked": lambda result: diet_stacked_bar(
+    "diet_composition_stacked_comparison": lambda result: diet_comparison_stacked_bar(
         result.tables.get(
             "question2_all_deliveries_diet_composition_percent_summary",
             pd.DataFrame(),
         ),
-        "Diet Composition by Group: All Deliveries",
+        result.tables.get(
+            "question2_identified_fish_only_diet_composition_percent_summary",
+            pd.DataFrame(),
+        ),
     ),
     "diet_identified_fish": lambda result: diet_bar(
         result.tables.get(
@@ -107,13 +110,6 @@ FIGURE_BUILDERS = {
             pd.DataFrame(),
         ),
         "Diet Composition: Identified Fish Only",
-    ),
-    "diet_identified_fish_stacked": lambda result: diet_stacked_bar(
-        result.tables.get(
-            "question2_identified_fish_only_diet_composition_percent_summary",
-            pd.DataFrame(),
-        ),
-        "Diet Composition by Group: Identified Fish Only",
     ),
     "fish_delivery_rates": lambda result: fish_rate_bar(
         result.tables.get("fish_delivery_rates_summary", pd.DataFrame())
@@ -162,9 +158,15 @@ app_ui = ui.page_navbar(
                 ui.card_header("2. Upload source files"),
                 ui.input_file(
                     "provisioning_file",
-                    "Provisioning workbook(s) *",
+                    "Provisioning workbook(s) — select all yearly files together *",
                     accept=[".xlsx"],
                     multiple=True,
+                ),
+                ui.p(
+                    "For a cross-year comparison, select two or more yearly "
+                    "workbooks in the file picker (use Command-click on macOS "
+                    "or Ctrl-click on Windows).",
+                    class_="upload-help",
                 ),
                 ui.input_file(
                     "metadata_file",
@@ -244,15 +246,22 @@ app_ui = ui.page_navbar(
     ui.nav_panel(
         "Diet Composition",
         ui.card(
+            ui.card_header("Diet composition by species"),
+            ui.output_plot("q2_stacked_comparison_plot", height="680px"),
+            ui.p(
+                "Each bar totals 100%. Identified fish only excludes unknown, "
+                "other, and non-fish deliveries.",
+                class_="callout",
+            ),
+        ),
+        ui.card(
             ui.card_header("All deliveries"),
             ui.output_plot("q2_all_plot", height="560px"),
-            ui.output_plot("q2_all_stacked_plot", height="560px"),
             ui.output_ui("q2_all_table"),
         ),
         ui.card(
             ui.card_header("Identified fish only"),
             ui.output_plot("q2_fish_plot", height="560px"),
-            ui.output_plot("q2_fish_stacked_plot", height="560px"),
             ui.output_ui("q2_fish_table"),
         ),
     ),
@@ -344,13 +353,20 @@ def server(input, output, session):
             from analysis.validation import ValidationResult
 
             return ValidationResult(False, [str(exc)], [])
-        return validate_multiple_inputs(
+        checked = validate_multiple_inputs(
             provisioning,
             metadata,
             transmitters,
             upload_names(input.provisioning_file()),
             upload_names(input.transmitter_file()),
         )
+        if input.analysis_mode() == "years" and len(provisioning) < 2:
+            checked.errors.append(
+                "Cross-year comparison requires at least two provisioning "
+                "workbooks. Select all yearly files in the same upload."
+            )
+            checked.is_valid = False
+        return checked
 
     def raw_results() -> AnalysisResults | None:
         return results.get()
@@ -625,10 +641,10 @@ def server(input, output, session):
 
     @output
     @render.plot
-    def q2_all_stacked_plot():
-        return diet_stacked_bar(
+    def q2_stacked_comparison_plot():
+        return diet_comparison_stacked_bar(
             table_from_result("question2_all_deliveries_diet_composition_percent_summary"),
-            "Diet Composition by Group: All Deliveries",
+            table_from_result("question2_identified_fish_only_diet_composition_percent_summary"),
         )
 
     @output
@@ -642,14 +658,6 @@ def server(input, output, session):
         return diet_bar(
             table_from_result("question2_identified_fish_only_diet_composition_percent_summary"),
             "Diet Composition: Identified Fish Only",
-        )
-
-    @output
-    @render.plot
-    def q2_fish_stacked_plot():
-        return diet_stacked_bar(
-            table_from_result("question2_identified_fish_only_diet_composition_percent_summary"),
-            "Diet Composition by Group: Identified Fish Only",
         )
 
     @output

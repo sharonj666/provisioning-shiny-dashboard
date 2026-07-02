@@ -7,7 +7,7 @@ import pandas as pd
 
 matplotlib.use("Agg")
 
-from analysis.charts import diet_stacked_bar, fish_rate_box
+from analysis.charts import diet_comparison_stacked_bar, fish_rate_box
 from analysis.core import AnalysisResults, filter_analysis_results
 from scripts.clean_data import (
     CleanedTables,
@@ -55,6 +55,7 @@ class PreyNormalizationTests(unittest.TestCase):
             " a ": "Ammodytes",
             "H": "Herring",
             "ba": "Bay Anchovy",
+            "bu": "Butterfish",
             "S": "Silversides",
             "m": "Mackerel",
             "U": "Unknown",
@@ -68,6 +69,9 @@ class PreyNormalizationTests(unittest.TestCase):
 
     def test_unrecognized_label_is_preserved(self):
         self.assertEqual(normalize_prey_name("Squid"), "Squid")
+
+    def test_blank_prey2_is_unknown_instead_of_prey1_code(self):
+        self.assertEqual(normalize_prey_name(pd.NA), "Unknown")
 
 
 class MultiWorkbookTests(unittest.TestCase):
@@ -114,17 +118,25 @@ class FilteringAndChartTests(unittest.TestCase):
         self.assertEqual(filtered.cleaned.stints["year"].tolist(), [2025])
         self.assertEqual(filtered.tables["summary"]["species"].tolist(), ["COTE"])
 
-    def test_stacked_diet_plot_totals_are_percentage_scale(self):
-        summary = pd.DataFrame(
+    def test_stacked_diet_comparison_has_two_percentage_panels(self):
+        all_summary = pd.DataFrame(
             {
-                "year": [2025, 2025],
-                "species": ["ROST", "ROST"],
-                "prey_species": ["Ammodytes", "Herring"],
-                "diet_percent": [60.0, 40.0],
+                "year": [2025, 2025, 2025, 2025],
+                "species": ["COTE", "COTE", "ROST", "ROST"],
+                "prey_species": ["Ammodytes", "Unknown", "Ammodytes", "Unknown"],
+                "diet_percent": [70.0, 30.0, 80.0, 20.0],
             }
         )
-        figure = diet_stacked_bar(summary, "Diet")
+        identified = all_summary[all_summary["prey_species"] == "Ammodytes"].copy()
+        identified["diet_percent"] = 100.0
+        figure = diet_comparison_stacked_bar(all_summary, identified)
+        self.assertEqual(len(figure.axes), 2)
         self.assertEqual(tuple(figure.axes[0].get_ylim()), (0.0, 100.0))
+        self.assertEqual(
+            [tick.get_text() for tick in figure.axes[0].get_xticklabels()],
+            ["COTE", "ROST"],
+        )
+        self.assertTrue(figure.legends)
 
     def test_fish_boxplot_contains_both_metrics(self):
         rates = pd.DataFrame(

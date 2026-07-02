@@ -99,6 +99,12 @@ body {
   margin: 1rem 0;
 }
 
+.upload-help {
+  color: #64748b;
+  font-size: 0.88rem;
+  margin-top: -0.5rem;
+}
+
 .status-message {
   color: var(--rost-navy);
   font-weight: 650;
