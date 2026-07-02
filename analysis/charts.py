@@ -15,6 +15,7 @@ PREY_COLORS = {
     "Mackerel": "#72b7b2",
     "Butterfish": "#54a24b",
     "Herring": "#e45756",
+    "Pipefish": "#d62728",
     "Silversides": "#b279a2",
     "F": "#9d755d",
     "Other": "#bab0ac",
@@ -136,7 +137,19 @@ def diet_comparison_stacked_bar(
         for index, category in enumerate(categories)
     }
 
-    fig, axes = plt.subplots(1, 2, figsize=(15, 7), sharey=True)
+    fig = plt.figure(figsize=(15, 8.5))
+    grid = fig.add_gridspec(
+        2,
+        2,
+        height_ratios=(1.25, 8),
+        hspace=0.28,
+        wspace=0.2,
+    )
+    legend_ax = fig.add_subplot(grid[0, :])
+    legend_ax.set_axis_off()
+    left_ax = fig.add_subplot(grid[1, 0])
+    right_ax = fig.add_subplot(grid[1, 1], sharey=left_ax)
+    axes = [left_ax, right_ax]
     panels = [
         (axes[0], all_deliveries, "Diet Composition By Species (All Deliveries)"),
         (axes[1], identified_fish, "Diet Composition By Species (Identified Fish Only)"),
@@ -178,16 +191,15 @@ def diet_comparison_stacked_bar(
     axes[0].set_ylabel("Diet composition (%)")
     axes[1].set_ylabel("")
     if legend_handles:
-        fig.legend(
+        legend_ax.legend(
             legend_handles,
             categories,
             title="Prey species / category",
-            loc="upper center",
-            bbox_to_anchor=(0.5, 1.0),
+            loc="center",
             ncol=min(5, max(1, len(categories))),
             frameon=False,
         )
-    fig.subplots_adjust(top=0.78, bottom=0.13, left=0.07, right=0.98, wspace=0.2)
+    fig.subplots_adjust(bottom=0.1, left=0.07, right=0.98, top=0.98)
     return fig
 
 

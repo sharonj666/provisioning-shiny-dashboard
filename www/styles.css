@@ -134,6 +134,20 @@ body {
   border-left-color: #c53030;
 }
 
+.workbook-mapping {
+  background: #f8fbfc;
+  border: 1px solid #dbe5ea;
+  border-left: 5px solid var(--rost-teal);
+  border-radius: 6px;
+  margin: 1rem 0;
+  padding: 1rem;
+}
+
+.workbook-mapping h5 {
+  color: var(--rost-navy);
+  font-weight: 700;
+}
+
 .status-message {
   color: var(--rost-navy);
   font-weight: 650;
@@ -187,6 +201,11 @@ body {
   min-height: 520px;
   overflow: visible;
   width: 100% !important;
+}
+
+.stacked-diet-plot .shiny-plot-output {
+  height: 760px !important;
+  min-height: 760px;
 }
 
 .btn-primary,

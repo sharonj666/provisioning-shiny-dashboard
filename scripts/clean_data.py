@@ -25,11 +25,20 @@ OUTPUT_DIR = Path("data/cleaned")
 
 PREY_NAME_MAP = {
     "A": "Ammodytes",
+    "AMMODYTES": "Ammodytes",
     "H": "Herring",
+    "HERRING": "Herring",
     "BA": "Bay Anchovy",
+    "BAY ANCHOVY": "Bay Anchovy",
+    "BAYANCHOVY": "Bay Anchovy",
     "BU": "Butterfish",
+    "BUTTERFISH": "Butterfish",
     "S": "Silversides",
+    "SILVERSIDES": "Silversides",
     "M": "Mackerel",
+    "MACKEREL": "Mackerel",
+    "P": "Pipefish",
+    "PIPEFISH": "Pipefish",
     "U": "Unknown",
     "UNKNOWN": "Unknown",
     "O": "Other",
@@ -46,6 +55,22 @@ PROVISIONING_REQUIRED_COLUMNS = {
     "nest_number",
     "prey1",
     "prey2",
+    "nest1_number",
+    "number_chicks_1",
+}
+
+REQUIRED_COLUMN_LABELS = {
+    "date": "Date",
+    "species": "Species",
+    "blind": "Blind",
+    "time_start": "Observation start time",
+    "time_stop": "Observation stop time",
+    "time_of_delivery": "Delivery time",
+    "nest_number": "Delivery nest number",
+    "prey1": "Prey type (fish/non-fish)",
+    "prey2": "Prey species/category",
+    "nest1_number": "First watched nest",
+    "number_chicks_1": "Chicks at first watched nest",
 }
 
 PROVISIONING_SUPPORTING_COLUMNS = {
@@ -230,7 +255,7 @@ def normalize_prey_name(value: object) -> str:
     if pd.isna(text):
         return "Unknown"
     cleaned = str(text).strip()
-    return PREY_NAME_MAP.get(cleaned.upper(), cleaned)
+    return PREY_NAME_MAP.get(cleaned.upper(), "Other")
 
 
 def normalize_nest(value: object) -> object:
@@ -277,8 +302,22 @@ def read_workbook_sheet(
     workbook: Path,
     sheet_name: str,
     header_row: int = 0,
+    column_mapping: dict[str, str] | None = None,
+    nrows: int | None = None,
 ) -> pd.DataFrame:
-    df = pd.read_excel(workbook, sheet_name=sheet_name, header=header_row)
+    df = pd.read_excel(
+        workbook,
+        sheet_name=sheet_name,
+        header=header_row,
+        nrows=nrows,
+    )
+    if column_mapping:
+        raw_to_canonical = {
+            raw_column: canonical
+            for canonical, raw_column in column_mapping.items()
+            if raw_column
+        }
+        df = df.rename(columns=raw_to_canonical)
     df.columns = [clean_column_name(col) for col in df.columns]
     return df
 
@@ -296,6 +335,20 @@ def read_metadata(path: Path) -> pd.DataFrame:
 
 def standardize_data_entry(raw: pd.DataFrame) -> pd.DataFrame:
     df = raw.copy()
+    expected_columns = {
+        *SESSION_COLUMNS,
+        *DELIVERY_COLUMNS,
+        "time_of_delivery",
+        "time_start",
+        "time_stop",
+        "total_number_nests_watched",
+        "total_number_chicks_watched",
+        *[f"nest{slot}_number" for slot in range(1, 7)],
+        *[f"number_chicks_{slot}" for slot in range(1, 7)],
+    }
+    for column in expected_columns:
+        if column not in df:
+            df[column] = pd.NA
     df.insert(0, "source_row_id", range(1, len(df) + 1))
 
     for col in df.columns:
@@ -609,6 +662,7 @@ def clean_all(
     workbook: Path,
     metadata_path: Path,
     sheet_selection: WorkbookSheetSelection | None = None,
+    column_mapping: dict[str, str] | None = None,
 ) -> CleanedTables:
     if sheet_selection is None:
         detected = detect_provisioning_sheet(workbook)
@@ -620,6 +674,7 @@ def clean_all(
             workbook,
             sheet_selection.sheet_name,
             sheet_selection.header_row,
+            column_mapping,
         )
     )
     stints = build_observation_stints(data_entry)
@@ -660,6 +715,7 @@ def clean_all_workbooks(
     metadata_path: Path,
     source_names: Iterable[str] | None = None,
     sheet_selections: Iterable[WorkbookSheetSelection] | None = None,
+    column_mappings: Iterable[dict[str, str]] | None = None,
 ) -> CleanedTables:
     """Clean and safely combine one or more provisioning workbooks."""
     workbook_list = list(workbooks)
@@ -671,9 +727,12 @@ def clean_all_workbooks(
     selections = list(sheet_selections) if sheet_selections is not None else [None] * len(workbook_list)
     if len(selections) != len(workbook_list):
         raise ValueError("Each provisioning workbook must have one sheet selection.")
+    mappings = list(column_mappings) if column_mappings is not None else [{} for _ in workbook_list]
+    if len(mappings) != len(workbook_list):
+        raise ValueError("Each provisioning workbook must have one column mapping.")
 
     cleaned_sets = [
-        clean_all(path, metadata_path, selections[index])
+        clean_all(path, metadata_path, selections[index], mappings[index])
         for index, path in enumerate(workbook_list)
     ]
     stints = pd.concat(

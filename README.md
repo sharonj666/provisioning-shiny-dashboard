@@ -66,11 +66,11 @@ For a cross-year comparison, select at least two yearly provisioning workbooks
 in the upload dialog. The app combines them for the current browser session and
 keeps their observation, stint, and delivery identifiers distinct.
 
-The raw-data worksheet does not need to be named `DATA ENTRY`. For each
-workbook, the app scans the first 25 rows of every sheet, detects the
-provisioning columns and header row, and displays the result before analysis.
-If two sheets are equally plausible, choose the correct candidate in the
-in-app selector; the workbook itself does not need to be edited.
+The raw-data worksheet does not need to be named `DATA ENTRY`, and historical
+column names may differ. For each workbook, choose the raw-data sheet and
+header-row number in the app, then map every required analysis field to the
+workbook's raw column. Exact-name columns are preselected automatically, and
+the workbook itself does not need to be edited.
 
 ## Important Notes
 

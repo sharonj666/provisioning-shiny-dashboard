@@ -185,8 +185,8 @@ The first version should request three files:
 
 1. Provisioning workbook:
    - `.xlsx`
-   - must contain a sheet with the required provisioning columns; the app
-     automatically detects the sheet and header row
+   - choose the raw-data sheet and header row in the app, then map the
+     required provisioning fields to the workbook's columns
    - must contain `telem Banding for Lookup` unless the standalone transmitter file is required
 2. Metadata file:
    - `.csv`
@@ -257,7 +257,7 @@ Check:
 
 Confirm:
 
-- a provisioning data sheet and header row can be detected;
+- a raw-data sheet and header row are selected and every required field is mapped;
 - required columns exist;
 - dates can be parsed;
 - start and stop times are present;
@@ -547,8 +547,7 @@ Do not show raw Python tracebacks to normal users.
 Convert common failures into plain-language messages:
 
 ```text
-The provisioning data sheet could not be detected. The closest candidate is
-missing the following required columns: ...
+Select a raw-data sheet and map every required provisioning field.
 
 The DATE column could not be found.
 

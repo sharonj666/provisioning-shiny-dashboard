@@ -59,8 +59,16 @@ class PreyNormalizationTests(unittest.TestCase):
             "H": "Herring",
             "ba": "Bay Anchovy",
             "bu": "Butterfish",
+            "BUTTERFISH": "Butterfish",
             "S": "Silversides",
+            "silversides": "Silversides",
             "m": "Mackerel",
+            "MACKEREL": "Mackerel",
+            "P": "Pipefish",
+            "PIPEFISH": "Pipefish",
+            "ammodytes": "Ammodytes",
+            "BAY ANCHOVY": "Bay Anchovy",
+            "herring": "Herring",
             "U": "Unknown",
             "unknown": "Unknown",
             "O": "Other",
@@ -70,8 +78,8 @@ class PreyNormalizationTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(normalize_prey_name(raw), label)
 
-    def test_unrecognized_label_is_preserved(self):
-        self.assertEqual(normalize_prey_name("Squid"), "Squid")
+    def test_unrecognized_label_is_grouped_as_other(self):
+        self.assertEqual(normalize_prey_name("Squid"), "Other")
 
     def test_blank_prey2_is_unknown_instead_of_prey1_code(self):
         self.assertEqual(normalize_prey_name(pd.NA), "Unknown")
@@ -109,6 +117,7 @@ class SheetDetectionTests(unittest.TestCase):
         "PREY2",
         "OBSERVER",
         "NEST1 #",
+        "NUMBER CHICKS 1",
     ]
 
     def test_detects_arbitrary_sheet_name_and_late_header(self):
@@ -167,6 +176,27 @@ class SheetDetectionTests(unittest.TestCase):
             self.assertIsNone(detected.recommended)
             self.assertEqual(detected.candidates[0].missing_required, ("prey2",))
 
+    def test_user_mapping_renames_historical_columns(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "mapped.xlsx"
+            pd.DataFrame(
+                {
+                    "Observation Date": ["2022-06-01"],
+                    "Bird Code": ["ROST"],
+                }
+            ).to_excel(path, sheet_name="Field Log", index=False)
+            mapped = read_workbook_sheet(
+                path,
+                "Field Log",
+                0,
+                {
+                    "date": "Observation Date",
+                    "species": "Bird Code",
+                },
+            )
+            self.assertIn("date", mapped.columns)
+            self.assertIn("species", mapped.columns)
+
 
 class FilteringAndChartTests(unittest.TestCase):
     def test_filter_applies_to_cleaned_data_and_tables(self):
@@ -205,13 +235,14 @@ class FilteringAndChartTests(unittest.TestCase):
         identified = all_summary[all_summary["prey_species"] == "Ammodytes"].copy()
         identified["diet_percent"] = 100.0
         figure = diet_comparison_stacked_bar(all_summary, identified)
-        self.assertEqual(len(figure.axes), 2)
-        self.assertEqual(tuple(figure.axes[0].get_ylim()), (0.0, 100.0))
+        self.assertEqual(len(figure.axes), 3)
+        self.assertFalse(figure.axes[0].axison)
+        self.assertEqual(tuple(figure.axes[1].get_ylim()), (0.0, 100.0))
         self.assertEqual(
-            [tick.get_text() for tick in figure.axes[0].get_xticklabels()],
+            [tick.get_text() for tick in figure.axes[1].get_xticklabels()],
             ["COTE", "ROST"],
         )
-        self.assertTrue(figure.legends)
+        self.assertTrue(figure.axes[0].get_legend())
 
     def test_fish_boxplot_contains_both_metrics(self):
         rates = pd.DataFrame(

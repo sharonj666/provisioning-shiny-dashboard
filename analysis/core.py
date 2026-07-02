@@ -148,6 +148,7 @@ def build_complete_analysis(
     transmitter_workbook: Path | list[Path] | None = None,
     source_names: list[str] | None = None,
     sheet_selections: list[WorkbookSheetSelection] | None = None,
+    column_mappings: list[dict[str, str]] | None = None,
 ) -> AnalysisResults:
     workbooks = (
         [provisioning_workbook]
@@ -159,6 +160,7 @@ def build_complete_analysis(
         metadata_csv,
         source_names=source_names,
         sheet_selections=sheet_selections,
+        column_mappings=column_mappings,
     )
     tables: dict[str, pd.DataFrame] = {}
     tables.update(build_quality_tables(cleaned))

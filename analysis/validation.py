@@ -9,9 +9,11 @@ import pandas as pd
 
 from scripts.clean_data import (
     PROVISIONING_REQUIRED_COLUMNS,
+    REQUIRED_COLUMN_LABELS,
     WorkbookSheetSelection,
     clean_column_name,
     detect_provisioning_sheet,
+    read_workbook_sheet,
 )
 
 
@@ -54,12 +56,14 @@ def validate_multiple_inputs(
     provisioning_names: list[str] | None = None,
     transmitter_names: list[str] | None = None,
     sheet_selections: list[WorkbookSheetSelection | None] | None = None,
+    column_mappings: list[dict[str, str]] | None = None,
 ) -> ValidationResult:
     errors: list[str] = []
     warnings: list[str] = []
     provisioning_names = provisioning_names or [path.name for path in provisioning_workbooks]
     transmitter_names = transmitter_names or [path.name for path in transmitter_workbooks]
     selections = sheet_selections or [None] * len(provisioning_workbooks)
+    mappings = column_mappings or [{} for _ in provisioning_workbooks]
 
     if not provisioning_workbooks:
         errors.append("Upload at least one provisioning workbook.")
@@ -74,11 +78,35 @@ def validate_multiple_inputs(
         local_errors: list[str] = []
         local_warnings: list[str] = []
         selection = selections[index] if index < len(selections) else None
+        mapping = mappings[index] if index < len(mappings) else {}
+        unmapped = [
+            REQUIRED_COLUMN_LABELS[column]
+            for column in REQUIRED_COLUMN_LABELS
+            if not mapping.get(column)
+        ]
+        if unmapped:
+            local_errors.append(
+                "Map every required field: " + ", ".join(unmapped)
+            )
+        mapped_raw_columns = [value for value in mapping.values() if value]
+        duplicates = sorted(
+            {
+                value
+                for value in mapped_raw_columns
+                if mapped_raw_columns.count(value) > 1
+            }
+        )
+        if duplicates:
+            local_errors.append(
+                "Each raw column may be mapped only once: "
+                + ", ".join(duplicates)
+            )
         _validate_provisioning_workbook(
             path,
             local_errors,
             local_warnings,
             sheet_selection=selection,
+            column_mapping=mapping,
         )
         errors.extend(f"{name}: {message}" for message in local_errors)
         warnings.extend(f"{name}: {message}" for message in local_warnings)
@@ -108,6 +136,7 @@ def _validate_provisioning_workbook(
     errors: list[str],
     warnings: list[str],
     sheet_selection: WorkbookSheetSelection | None = None,
+    column_mapping: dict[str, str] | None = None,
 ) -> None:
     if path.suffix.lower() != ".xlsx":
         errors.append("Provisioning workbook must be an .xlsx file.")
@@ -143,10 +172,11 @@ def _validate_provisioning_workbook(
             f"Selected data sheet '{sheet_selection.sheet_name}' was not found."
         )
         return
-    data = pd.read_excel(
+    data = read_workbook_sheet(
         path,
-        sheet_name=sheet_selection.sheet_name,
-        header=sheet_selection.header_row,
+        sheet_selection.sheet_name,
+        sheet_selection.header_row,
+        column_mapping,
         nrows=5,
     )
     present = {clean_column_name(col) for col in data.columns}

@@ -28,9 +28,9 @@ from analysis.charts import (
 from analysis.core import AnalysisResults, build_complete_analysis, filter_analysis_results
 from analysis.validation import validate_multiple_inputs
 from scripts.clean_data import (
-    SheetDetectionResult,
+    REQUIRED_COLUMN_LABELS,
     WorkbookSheetSelection,
-    detect_provisioning_sheet,
+    clean_column_name,
 )
 
 
@@ -173,7 +173,7 @@ app_ui = ui.page_navbar(
                     "or Ctrl-click on Windows).",
                     class_="upload-help",
                 ),
-                ui.output_ui("detected_sheets_ui"),
+                ui.output_ui("workbook_mapping_ui"),
                 ui.input_file(
                     "metadata_file",
                     "Shared metadata file *",
@@ -253,7 +253,13 @@ app_ui = ui.page_navbar(
         "Diet Composition",
         ui.card(
             ui.card_header("Diet composition by species"),
-            ui.output_plot("q2_stacked_comparison_plot", height="680px"),
+            ui.div(
+                ui.output_plot(
+                    "q2_stacked_comparison_plot",
+                    height="760px",
+                ),
+                class_="stacked-diet-plot",
+            ),
             ui.p(
                 "Each bar totals 100%. Identified fish only excludes unknown, "
                 "other, and non-fish deliveries.",
@@ -352,38 +358,91 @@ def server(input, output, session):
         transmitters = uploaded_paths(input.transmitter_file())
         return provisioning, metadata, transmitters
 
-    @reactive.calc
-    def sheet_detections() -> list[SheetDetectionResult | None]:
-        detections: list[SheetDetectionResult | None] = []
-        for path in uploaded_paths(input.provisioning_file()):
-            try:
-                detections.append(detect_provisioning_sheet(path))
-            except Exception:  # noqa: BLE001
-                detections.append(None)
-        return detections
+    def input_value(input_id: str, default=None):
+        try:
+            value = getattr(input, input_id)()
+        except Exception:  # noqa: BLE001
+            return default
+        return default if value in (None, "") else value
 
-    def current_sheet_selections() -> list[WorkbookSheetSelection | None]:
-        selections: list[WorkbookSheetSelection | None] = []
-        for index, detected in enumerate(sheet_detections()):
-            if detected is None or detected.recommended is None:
-                selections.append(None)
-                continue
-            candidate = detected.recommended
-            if detected.ambiguous:
-                try:
-                    selected_key = getattr(input, f"data_sheet_choice_{index}")()
-                except Exception:  # noqa: BLE001
-                    selected_key = None
-                candidate = next(
-                    (
-                        item
-                        for item in detected.valid_candidates
-                        if item.key == selected_key
-                    ),
-                    detected.recommended,
+    def workbook_configuration(
+        index: int,
+        path: Path,
+        include_mapping_inputs: bool = True,
+    ) -> tuple[list[str], WorkbookSheetSelection | None, list[str], dict[str, str]]:
+        try:
+            with pd.ExcelFile(path) as workbook:
+                sheet_names = list(workbook.sheet_names)
+        except Exception:  # noqa: BLE001
+            return [], None, [], {}
+        if not sheet_names:
+            return [], None, [], {}
+        default_sheet = next(
+            (
+                name
+                for name in sheet_names
+                if name.strip().casefold() == "data entry"
+            ),
+            sheet_names[0],
+        )
+        sheet_name = str(
+            input_value(f"raw_sheet_{index}", default_sheet)
+        )
+        if sheet_name not in sheet_names:
+            sheet_name = default_sheet
+        try:
+            header_number = max(
+                1,
+                min(25, int(input_value(f"raw_header_row_{index}", 1))),
+            )
+        except (TypeError, ValueError):
+            header_number = 1
+        selection = WorkbookSheetSelection(sheet_name, header_number - 1)
+        try:
+            headers = [
+                str(column)
+                for column in pd.read_excel(
+                    path,
+                    sheet_name=sheet_name,
+                    header=selection.header_row,
+                    nrows=0,
+                ).columns
+            ]
+        except Exception:  # noqa: BLE001
+            headers = []
+        defaults = {
+            canonical: next(
+                (
+                    header
+                    for header in headers
+                    if clean_column_name(header) == canonical
+                ),
+                "",
+            )
+            for canonical in REQUIRED_COLUMN_LABELS
+        }
+        if include_mapping_inputs:
+            mapping = {
+                canonical: str(
+                    input_value(
+                        f"column_map_{index}_{canonical}",
+                        defaults[canonical],
+                    )
                 )
-            selections.append(candidate.selection())
-        return selections
+                for canonical in REQUIRED_COLUMN_LABELS
+            }
+        else:
+            mapping = defaults
+        return sheet_names, selection, headers, mapping
+
+    def current_workbook_configuration():
+        selections = []
+        mappings = []
+        for index, path in enumerate(uploaded_paths(input.provisioning_file())):
+            _, selection, _, mapping = workbook_configuration(index, path)
+            selections.append(selection)
+            mappings.append(mapping)
+        return selections, mappings
 
     def validation():
         try:
@@ -392,13 +451,15 @@ def server(input, output, session):
             from analysis.validation import ValidationResult
 
             return ValidationResult(False, [str(exc)], [])
+        selections, mappings = current_workbook_configuration()
         checked = validate_multiple_inputs(
             provisioning,
             metadata,
             transmitters,
             upload_names(input.provisioning_file()),
             upload_names(input.transmitter_file()),
-            sheet_selections=current_sheet_selections(),
+            sheet_selections=selections,
+            column_mappings=mappings,
         )
         if input.analysis_mode() == "years" and len(provisioning) < 2:
             checked.errors.append(
@@ -486,15 +547,19 @@ def server(input, output, session):
 
     @output
     @render.ui
-    def detected_sheets_ui():
+    def workbook_mapping_ui():
         file_names = upload_names(input.provisioning_file())
-        detections = sheet_detections()
+        paths = uploaded_paths(input.provisioning_file())
         if not file_names:
             return ui.tags.div()
         items = []
-        for index, name in enumerate(file_names):
-            detected = detections[index] if index < len(detections) else None
-            if detected is None:
+        for index, (name, path) in enumerate(zip(file_names, paths, strict=False)):
+            sheet_names, selection, headers, defaults = workbook_configuration(
+                index,
+                path,
+                include_mapping_inputs=False,
+            )
+            if selection is None:
                 items.append(
                     ui.div(
                         ui.strong(name),
@@ -503,53 +568,49 @@ def server(input, output, session):
                     )
                 )
                 continue
-            if detected.recommended is None:
-                if detected.candidates:
-                    closest = detected.candidates[0]
-                    detail = (
-                        f"Closest candidate: {closest.label}; missing "
-                        f"{', '.join(closest.missing_required)}."
-                    )
-                else:
-                    detail = "No plausible sheet or header row was found."
-                items.append(
-                    ui.div(
-                        ui.strong(name),
-                        ui.p(detail),
-                        class_="sheet-detection sheet-detection-error",
-                    )
+            header_choices = {"": "— Select a raw column —"}
+            header_choices.update({header: header for header in headers})
+            mapping_controls = [
+                ui.input_select(
+                    f"column_map_{index}_{canonical}",
+                    f"{label} *",
+                    header_choices,
+                    selected=defaults[canonical],
                 )
-                continue
-            if detected.ambiguous:
-                choices = {
-                    candidate.key: candidate.label
-                    for candidate in detected.valid_candidates
-                }
-                items.append(
-                    ui.div(
-                        ui.strong(name),
-                        ui.p("Multiple sheets look like provisioning data. Choose one:"),
+                for canonical, label in REQUIRED_COLUMN_LABELS.items()
+            ]
+            items.append(
+                ui.div(
+                    ui.h5(name),
+                    ui.layout_columns(
                         ui.input_select(
-                            f"data_sheet_choice_{index}",
-                            "Raw-data sheet and header",
-                            choices,
-                            selected=detected.recommended.key,
+                            f"raw_sheet_{index}",
+                            "Raw-data sheet",
+                            sheet_names,
+                            selected=selection.sheet_name,
                         ),
-                        class_="sheet-detection sheet-detection-warning",
-                    )
+                        ui.input_numeric(
+                            f"raw_header_row_{index}",
+                            "Header row number",
+                            value=selection.header_row + 1,
+                            min=1,
+                            max=25,
+                            step=1,
+                        ),
+                        col_widths=(8, 4),
+                    ),
+                    ui.p(
+                        "Map each required analysis field to this workbook's raw column.",
+                        class_="upload-help",
+                    ),
+                    ui.layout_columns(*mapping_controls, col_widths=(4, 4, 4)),
+                    class_="workbook-mapping",
                 )
-            else:
-                items.append(
-                    ui.div(
-                        ui.strong(name),
-                        ui.p(f"Detected: {detected.recommended.label}"),
-                        class_="sheet-detection sheet-detection-success",
-                    )
-                )
+            )
         return ui.div(
-            ui.h5("Detected raw-data locations"),
+            ui.h5("Workbook column mapping"),
             *items,
-            class_="sheet-detections",
+            class_="workbook-mappings",
         )
 
     @reactive.effect
@@ -563,17 +624,15 @@ def server(input, output, session):
             last_message.set("Analysis did not run. Fix the upload errors first.")
             return
         provisioning, metadata, transmitters = current_uploads()
+        selections, mappings = current_workbook_configuration()
         try:
             result = build_complete_analysis(
                 provisioning,
                 metadata,
                 transmitters or None,
                 source_names=upload_names(input.provisioning_file()),
-                sheet_selections=[
-                    selection
-                    for selection in current_sheet_selections()
-                    if selection is not None
-                ],
+                sheet_selections=selections,
+                column_mappings=mappings,
             )
         except Exception as exc:  # noqa: BLE001
             results.set(None)
