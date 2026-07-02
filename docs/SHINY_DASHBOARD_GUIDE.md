@@ -185,7 +185,8 @@ The first version should request three files:
 
 1. Provisioning workbook:
    - `.xlsx`
-   - must contain `DATA ENTRY`
+   - must contain a sheet with the required provisioning columns; the app
+     automatically detects the sheet and header row
    - must contain `telem Banding for Lookup` unless the standalone transmitter file is required
 2. Metadata file:
    - `.csv`
@@ -256,7 +257,7 @@ Check:
 
 Confirm:
 
-- `DATA ENTRY` exists;
+- a provisioning data sheet and header row can be detected;
 - required columns exist;
 - dates can be parsed;
 - start and stop times are present;
@@ -546,7 +547,8 @@ Do not show raw Python tracebacks to normal users.
 Convert common failures into plain-language messages:
 
 ```text
-The provisioning workbook does not contain a DATA ENTRY sheet.
+The provisioning data sheet could not be detected. The closest candidate is
+missing the following required columns: ...
 
 The DATE column could not be found.
 

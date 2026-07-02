@@ -1,4 +1,5 @@
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -12,7 +13,9 @@ from analysis.core import AnalysisResults, filter_analysis_results
 from scripts.clean_data import (
     CleanedTables,
     clean_all_workbooks,
+    detect_provisioning_sheet,
     normalize_prey_name,
+    read_workbook_sheet,
 )
 
 
@@ -91,6 +94,78 @@ class MultiWorkbookTests(unittest.TestCase):
             combined.stints["source_workbook"].tolist(),
             ["2024.xlsx", "2025.xlsx"],
         )
+
+
+class SheetDetectionTests(unittest.TestCase):
+    columns = [
+        "DATE",
+        "SPECIES",
+        "BLIND",
+        "TIME START",
+        "TIME STOP",
+        "TIME OF DELIVERY",
+        "NEST #",
+        "PREY1",
+        "PREY2",
+        "OBSERVER",
+        "NEST1 #",
+    ]
+
+    def test_detects_arbitrary_sheet_name_and_late_header(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "historical.xlsx"
+            with pd.ExcelWriter(path) as writer:
+                pd.DataFrame([["Annual provisioning records"]]).to_excel(
+                    writer,
+                    sheet_name="2022 Observations",
+                    index=False,
+                    header=False,
+                )
+                pd.DataFrame(columns=self.columns).to_excel(
+                    writer,
+                    sheet_name="2022 Observations",
+                    index=False,
+                    startrow=3,
+                )
+                pd.DataFrame({"note": ["not raw data"]}).to_excel(
+                    writer,
+                    sheet_name="Read Me",
+                    index=False,
+                )
+            detected = detect_provisioning_sheet(path)
+            self.assertIsNotNone(detected.recommended)
+            self.assertEqual(detected.recommended.sheet_name, "2022 Observations")
+            self.assertEqual(detected.recommended.header_row, 3)
+            selected = read_workbook_sheet(path, "2022 Observations", 3)
+            self.assertIn("time_of_delivery", selected.columns)
+
+    def test_equal_candidates_are_marked_ambiguous(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "ambiguous.xlsx"
+            with pd.ExcelWriter(path) as writer:
+                for sheet in ["Raw Data", "Backup"]:
+                    pd.DataFrame(columns=self.columns).to_excel(
+                        writer,
+                        sheet_name=sheet,
+                        index=False,
+                    )
+            detected = detect_provisioning_sheet(path)
+            self.assertTrue(detected.ambiguous)
+            self.assertEqual(len(detected.valid_candidates), 2)
+
+    def test_invalid_workbook_reports_closest_candidate(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "incomplete.xlsx"
+            incomplete = [column for column in self.columns if column != "PREY2"]
+            with pd.ExcelWriter(path) as writer:
+                pd.DataFrame(columns=incomplete).to_excel(
+                    writer,
+                    sheet_name="Field Records",
+                    index=False,
+                )
+            detected = detect_provisioning_sheet(path)
+            self.assertIsNone(detected.recommended)
+            self.assertEqual(detected.candidates[0].missing_required, ("prey2",))
 
 
 class FilteringAndChartTests(unittest.TestCase):

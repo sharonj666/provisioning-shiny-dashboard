@@ -10,7 +10,11 @@ from tempfile import TemporaryDirectory
 
 import pandas as pd
 
-from scripts.clean_data import CleanedTables, clean_all_workbooks
+from scripts.clean_data import (
+    CleanedTables,
+    WorkbookSheetSelection,
+    clean_all_workbooks,
+)
 
 from .statistics import summarize_metric
 from .tagged_parents import analyze_tagged_parent_rates
@@ -143,13 +147,19 @@ def build_complete_analysis(
     metadata_csv: Path,
     transmitter_workbook: Path | list[Path] | None = None,
     source_names: list[str] | None = None,
+    sheet_selections: list[WorkbookSheetSelection] | None = None,
 ) -> AnalysisResults:
     workbooks = (
         [provisioning_workbook]
         if isinstance(provisioning_workbook, Path)
         else list(provisioning_workbook)
     )
-    cleaned = clean_all_workbooks(workbooks, metadata_csv, source_names=source_names)
+    cleaned = clean_all_workbooks(
+        workbooks,
+        metadata_csv,
+        source_names=source_names,
+        sheet_selections=sheet_selections,
+    )
     tables: dict[str, pd.DataFrame] = {}
     tables.update(build_quality_tables(cleaned))
     tables.update(analyze_prey_delivery_rate(cleaned.stints))

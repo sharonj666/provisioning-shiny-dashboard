@@ -7,6 +7,13 @@ from pathlib import Path
 
 import pandas as pd
 
+from scripts.clean_data import (
+    PROVISIONING_REQUIRED_COLUMNS,
+    WorkbookSheetSelection,
+    clean_column_name,
+    detect_provisioning_sheet,
+)
+
 
 @dataclass
 class ValidationResult:
@@ -46,11 +53,13 @@ def validate_multiple_inputs(
     transmitter_workbooks: list[Path],
     provisioning_names: list[str] | None = None,
     transmitter_names: list[str] | None = None,
+    sheet_selections: list[WorkbookSheetSelection | None] | None = None,
 ) -> ValidationResult:
     errors: list[str] = []
     warnings: list[str] = []
     provisioning_names = provisioning_names or [path.name for path in provisioning_workbooks]
     transmitter_names = transmitter_names or [path.name for path in transmitter_workbooks]
+    selections = sheet_selections or [None] * len(provisioning_workbooks)
 
     if not provisioning_workbooks:
         errors.append("Upload at least one provisioning workbook.")
@@ -59,10 +68,18 @@ def validate_multiple_inputs(
     if not transmitter_workbooks:
         warnings.append("Adult transmitter files were not uploaded. Feeding-rate-by-tagged-status analysis will not run.")
 
-    for path, name in zip(provisioning_workbooks, provisioning_names, strict=False):
+    for index, (path, name) in enumerate(
+        zip(provisioning_workbooks, provisioning_names, strict=False)
+    ):
         local_errors: list[str] = []
         local_warnings: list[str] = []
-        _validate_provisioning_workbook(path, local_errors, local_warnings)
+        selection = selections[index] if index < len(selections) else None
+        _validate_provisioning_workbook(
+            path,
+            local_errors,
+            local_warnings,
+            sheet_selection=selection,
+        )
         errors.extend(f"{name}: {message}" for message in local_errors)
         warnings.extend(f"{name}: {message}" for message in local_warnings)
     if metadata_csv is not None:
@@ -86,39 +103,66 @@ def validate_multiple_inputs(
     return ValidationResult(is_valid=not errors, errors=errors, warnings=warnings)
 
 
-def _validate_provisioning_workbook(path: Path, errors: list[str], warnings: list[str]) -> None:
+def _validate_provisioning_workbook(
+    path: Path,
+    errors: list[str],
+    warnings: list[str],
+    sheet_selection: WorkbookSheetSelection | None = None,
+) -> None:
     if path.suffix.lower() != ".xlsx":
         errors.append("Provisioning workbook must be an .xlsx file.")
         return
     try:
-        workbook = pd.ExcelFile(path)
+        with pd.ExcelFile(path) as workbook:
+            sheet_names = list(workbook.sheet_names)
     except Exception as exc:  # noqa: BLE001
         errors.append(f"Could not open provisioning workbook: {exc}")
         return
-    if "DATA ENTRY" not in workbook.sheet_names:
-        errors.append("Provisioning workbook is missing the DATA ENTRY sheet.")
-        return
-    if "telem Banding for Lookup" not in workbook.sheet_names:
+    if "telem Banding for Lookup" not in sheet_names:
         warnings.append("Provisioning workbook is missing telem Banding for Lookup.")
 
-    data = pd.read_excel(path, sheet_name="DATA ENTRY", nrows=5)
-    required = {
-        "DATE",
-        "SPECIES",
-        "BLIND",
-        "TIME START",
-        "TIME STOP",
-        "TIME OF DELIVERY",
-        "NEST #",
-        "PREY1",
-        "PREY2",
-    }
-    present = {str(col).strip().upper() for col in data.columns}
-    missing = sorted(required - present)
+    if sheet_selection is None:
+        detected = detect_provisioning_sheet(path)
+        if detected.recommended is None:
+            if detected.candidates:
+                closest = detected.candidates[0]
+                errors.append(
+                    f"Could not identify the provisioning data sheet. Closest "
+                    f"candidate is '{closest.sheet_name}' at header row "
+                    f"{closest.header_row + 1}; missing: "
+                    f"{', '.join(closest.missing_required)}."
+                )
+            else:
+                errors.append(
+                    "Could not identify a provisioning data sheet or header row."
+                )
+            return
+        sheet_selection = detected.recommended.selection()
+    if sheet_selection.sheet_name not in sheet_names:
+        errors.append(
+            f"Selected data sheet '{sheet_selection.sheet_name}' was not found."
+        )
+        return
+    data = pd.read_excel(
+        path,
+        sheet_name=sheet_selection.sheet_name,
+        header=sheet_selection.header_row,
+        nrows=5,
+    )
+    present = {clean_column_name(col) for col in data.columns}
+    missing = sorted(PROVISIONING_REQUIRED_COLUMNS - present)
     if missing:
-        errors.append(f"DATA ENTRY is missing required columns: {', '.join(missing)}")
+        errors.append(
+            f"{sheet_selection.sheet_name} (header row "
+            f"{sheet_selection.header_row + 1}) is missing required columns: "
+            f"{', '.join(missing)}"
+        )
     if not any(col.startswith("NEST1") for col in present):
-        warnings.append("DATA ENTRY does not appear to contain watched-nest columns such as NEST1 #.")
+        if "nest1_number" not in present:
+            warnings.append(
+                f"{sheet_selection.sheet_name} does not appear to contain "
+                "watched-nest columns such as NEST1 #."
+            )
 
 
 def _validate_metadata_csv(path: Path, errors: list[str]) -> None:
@@ -139,11 +183,12 @@ def _validate_transmitter_workbook(path: Path, errors: list[str], warnings: list
         errors.append("Adult transmitter file must be an .xlsx file.")
         return
     try:
-        workbook = pd.ExcelFile(path)
+        with pd.ExcelFile(path) as workbook:
+            sheet_names = list(workbook.sheet_names)
     except Exception as exc:  # noqa: BLE001
         errors.append(f"Could not open adult transmitter workbook: {exc}")
         return
-    if "Sheet1" not in workbook.sheet_names:
+    if "Sheet1" not in sheet_names:
         errors.append("Adult transmitter workbook is missing Sheet1.")
         return
     data = pd.read_excel(path, sheet_name="Sheet1", nrows=10)

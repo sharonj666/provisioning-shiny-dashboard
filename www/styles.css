@@ -105,6 +105,35 @@ body {
   margin-top: -0.5rem;
 }
 
+.sheet-detections {
+  margin: 1rem 0;
+}
+
+.sheet-detection {
+  border-left: 4px solid #94a3b8;
+  margin: 0.65rem 0;
+  padding: 0.6rem 0.8rem;
+}
+
+.sheet-detection p {
+  margin-bottom: 0;
+}
+
+.sheet-detection-success {
+  background: #ecfdf5;
+  border-left-color: #2f855a;
+}
+
+.sheet-detection-warning {
+  background: #fffbeb;
+  border-left-color: #d69e2e;
+}
+
+.sheet-detection-error {
+  background: #fff1f2;
+  border-left-color: #c53030;
+}
+
 .status-message {
   color: var(--rost-navy);
   font-weight: 650;

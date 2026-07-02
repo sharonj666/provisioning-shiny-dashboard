@@ -36,6 +36,32 @@ PREY_NAME_MAP = {
     "OTHER": "Other",
 }
 
+PROVISIONING_REQUIRED_COLUMNS = {
+    "date",
+    "species",
+    "blind",
+    "time_start",
+    "time_stop",
+    "time_of_delivery",
+    "nest_number",
+    "prey1",
+    "prey2",
+}
+
+PROVISIONING_SUPPORTING_COLUMNS = {
+    "observer",
+    "weather",
+    "telemetry_nest",
+    "prey_size",
+    "fate_of_prey",
+    "chick_pfr",
+    "adult_pfr_or_telem",
+    "total_number_nests_watched",
+    "total_number_chicks_watched",
+    "nest1_number",
+    "number_chicks_1",
+}
+
 SESSION_COLUMNS = [
     "date",
     "species",
@@ -71,12 +97,117 @@ class CleanedTables:
     quality: dict
 
 
+@dataclass(frozen=True)
+class WorkbookSheetSelection:
+    sheet_name: str
+    header_row: int
+
+
+@dataclass(frozen=True)
+class SheetCandidate:
+    sheet_name: str
+    header_row: int
+    matched_required: tuple[str, ...]
+    missing_required: tuple[str, ...]
+    matched_supporting: tuple[str, ...]
+    score: int
+
+    @property
+    def is_valid(self) -> bool:
+        return not self.missing_required
+
+    @property
+    def key(self) -> str:
+        return f"{self.header_row}|{self.sheet_name}"
+
+    @property
+    def label(self) -> str:
+        return f"{self.sheet_name} (header row {self.header_row + 1})"
+
+    def selection(self) -> WorkbookSheetSelection:
+        return WorkbookSheetSelection(self.sheet_name, self.header_row)
+
+
+@dataclass(frozen=True)
+class SheetDetectionResult:
+    candidates: tuple[SheetCandidate, ...]
+
+    @property
+    def valid_candidates(self) -> tuple[SheetCandidate, ...]:
+        return tuple(candidate for candidate in self.candidates if candidate.is_valid)
+
+    @property
+    def recommended(self) -> SheetCandidate | None:
+        valid = self.valid_candidates
+        return valid[0] if valid else None
+
+    @property
+    def ambiguous(self) -> bool:
+        valid = self.valid_candidates
+        return len(valid) > 1 and valid[0].score == valid[1].score
+
+
 def clean_column_name(value: object) -> str:
     text = str(value).strip().lower()
     text = text.replace("#", " number ")
     text = text.replace("&", " and ")
     text = re.sub(r"[^a-z0-9]+", "_", text)
     return re.sub(r"_+", "_", text).strip("_")
+
+
+def detect_provisioning_sheet(
+    workbook: Path,
+    scan_rows: int = 25,
+) -> SheetDetectionResult:
+    """Find likely provisioning sheets and header rows by column signature."""
+    with pd.ExcelFile(workbook) as excel:
+        sheet_names = list(excel.sheet_names)
+    candidates: list[SheetCandidate] = []
+    for sheet_name in sheet_names:
+        try:
+            preview = pd.read_excel(
+                workbook,
+                sheet_name=sheet_name,
+                header=None,
+                nrows=scan_rows,
+                dtype=object,
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        best_for_sheet: SheetCandidate | None = None
+        for header_row, row in preview.iterrows():
+            columns = {
+                clean_column_name(value)
+                for value in row.tolist()
+                if not pd.isna(value) and clean_column_name(value)
+            }
+            matched_required = tuple(sorted(columns & PROVISIONING_REQUIRED_COLUMNS))
+            missing_required = tuple(sorted(PROVISIONING_REQUIRED_COLUMNS - columns))
+            matched_supporting = tuple(sorted(columns & PROVISIONING_SUPPORTING_COLUMNS))
+            exact_name_bonus = 3 if sheet_name.strip().casefold() == "data entry" else 0
+            score = len(matched_required) * 10 + len(matched_supporting) + exact_name_bonus
+            candidate = SheetCandidate(
+                sheet_name=sheet_name,
+                header_row=int(header_row),
+                matched_required=matched_required,
+                missing_required=missing_required,
+                matched_supporting=matched_supporting,
+                score=score,
+            )
+            if best_for_sheet is None or candidate.score > best_for_sheet.score:
+                best_for_sheet = candidate
+        if best_for_sheet is not None and best_for_sheet.matched_required:
+            candidates.append(best_for_sheet)
+    candidates.sort(
+        key=lambda candidate: (
+            candidate.is_valid,
+            candidate.score,
+            -candidate.header_row,
+            candidate.sheet_name.casefold() == "data entry",
+        ),
+        reverse=True,
+    )
+    return SheetDetectionResult(tuple(candidates))
 
 
 def clean_text(value: object) -> object:
@@ -142,8 +273,12 @@ def combine_date_time(date_value: object, time_value: object) -> pd.Timestamp:
     return pd.to_datetime(f"{pd.Timestamp(date_value).date()} {time_value}", errors="coerce")
 
 
-def read_workbook_sheet(workbook: Path, sheet_name: str) -> pd.DataFrame:
-    df = pd.read_excel(workbook, sheet_name=sheet_name)
+def read_workbook_sheet(
+    workbook: Path,
+    sheet_name: str,
+    header_row: int = 0,
+) -> pd.DataFrame:
+    df = pd.read_excel(workbook, sheet_name=sheet_name, header=header_row)
     df.columns = [clean_column_name(col) for col in df.columns]
     return df
 
@@ -470,13 +605,29 @@ def write_tables(tables: CleanedTables, output_dir: Path) -> None:
     (output_dir / "data_quality_report.json").write_text(json.dumps(tables.quality, indent=2), encoding="utf-8")
 
 
-def clean_all(workbook: Path, metadata_path: Path) -> CleanedTables:
-    data_entry = standardize_data_entry(read_workbook_sheet(workbook, "DATA ENTRY"))
+def clean_all(
+    workbook: Path,
+    metadata_path: Path,
+    sheet_selection: WorkbookSheetSelection | None = None,
+) -> CleanedTables:
+    if sheet_selection is None:
+        detected = detect_provisioning_sheet(workbook)
+        if detected.recommended is None:
+            raise ValueError("Could not find a sheet containing the required provisioning columns.")
+        sheet_selection = detected.recommended.selection()
+    data_entry = standardize_data_entry(
+        read_workbook_sheet(
+            workbook,
+            sheet_selection.sheet_name,
+            sheet_selection.header_row,
+        )
+    )
     stints = build_observation_stints(data_entry)
     deliveries = build_deliveries(data_entry, stints)
     stints, records_with_zeros = build_records_with_zeros(stints, deliveries)
     metadata = read_metadata(metadata_path)
-    workbook_sheets = pd.ExcelFile(workbook).sheet_names
+    with pd.ExcelFile(workbook) as excel:
+        workbook_sheets = list(excel.sheet_names)
     telemetry = (
         clean_telemetry(read_workbook_sheet(workbook, "telem Banding for Lookup"))
         if "telem Banding for Lookup" in workbook_sheets
@@ -508,6 +659,7 @@ def clean_all_workbooks(
     workbooks: Iterable[Path],
     metadata_path: Path,
     source_names: Iterable[str] | None = None,
+    sheet_selections: Iterable[WorkbookSheetSelection] | None = None,
 ) -> CleanedTables:
     """Clean and safely combine one or more provisioning workbooks."""
     workbook_list = list(workbooks)
@@ -516,8 +668,14 @@ def clean_all_workbooks(
     names = list(source_names or [path.name for path in workbook_list])
     if len(names) != len(workbook_list):
         raise ValueError("Each provisioning workbook must have one source name.")
+    selections = list(sheet_selections) if sheet_selections is not None else [None] * len(workbook_list)
+    if len(selections) != len(workbook_list):
+        raise ValueError("Each provisioning workbook must have one sheet selection.")
 
-    cleaned_sets = [clean_all(path, metadata_path) for path in workbook_list]
+    cleaned_sets = [
+        clean_all(path, metadata_path, selections[index])
+        for index, path in enumerate(workbook_list)
+    ]
     stints = pd.concat(
         [
             _source_scoped_table(cleaned.stints, names[index], index + 1)

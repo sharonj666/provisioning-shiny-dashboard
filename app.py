@@ -27,6 +27,11 @@ from analysis.charts import (
 )
 from analysis.core import AnalysisResults, build_complete_analysis, filter_analysis_results
 from analysis.validation import validate_multiple_inputs
+from scripts.clean_data import (
+    SheetDetectionResult,
+    WorkbookSheetSelection,
+    detect_provisioning_sheet,
+)
 
 
 APP_CSS = (ROOT / "www" / "styles.css").read_text(encoding="utf-8")
@@ -168,6 +173,7 @@ app_ui = ui.page_navbar(
                     "or Ctrl-click on Windows).",
                     class_="upload-help",
                 ),
+                ui.output_ui("detected_sheets_ui"),
                 ui.input_file(
                     "metadata_file",
                     "Shared metadata file *",
@@ -346,6 +352,39 @@ def server(input, output, session):
         transmitters = uploaded_paths(input.transmitter_file())
         return provisioning, metadata, transmitters
 
+    @reactive.calc
+    def sheet_detections() -> list[SheetDetectionResult | None]:
+        detections: list[SheetDetectionResult | None] = []
+        for path in uploaded_paths(input.provisioning_file()):
+            try:
+                detections.append(detect_provisioning_sheet(path))
+            except Exception:  # noqa: BLE001
+                detections.append(None)
+        return detections
+
+    def current_sheet_selections() -> list[WorkbookSheetSelection | None]:
+        selections: list[WorkbookSheetSelection | None] = []
+        for index, detected in enumerate(sheet_detections()):
+            if detected is None or detected.recommended is None:
+                selections.append(None)
+                continue
+            candidate = detected.recommended
+            if detected.ambiguous:
+                try:
+                    selected_key = getattr(input, f"data_sheet_choice_{index}")()
+                except Exception:  # noqa: BLE001
+                    selected_key = None
+                candidate = next(
+                    (
+                        item
+                        for item in detected.valid_candidates
+                        if item.key == selected_key
+                    ),
+                    detected.recommended,
+                )
+            selections.append(candidate.selection())
+        return selections
+
     def validation():
         try:
             provisioning, metadata, transmitters = current_uploads()
@@ -359,6 +398,7 @@ def server(input, output, session):
             transmitters,
             upload_names(input.provisioning_file()),
             upload_names(input.transmitter_file()),
+            sheet_selections=current_sheet_selections(),
         )
         if input.analysis_mode() == "years" and len(provisioning) < 2:
             checked.errors.append(
@@ -444,6 +484,74 @@ def server(input, output, session):
             class_="global-controls",
         )
 
+    @output
+    @render.ui
+    def detected_sheets_ui():
+        file_names = upload_names(input.provisioning_file())
+        detections = sheet_detections()
+        if not file_names:
+            return ui.tags.div()
+        items = []
+        for index, name in enumerate(file_names):
+            detected = detections[index] if index < len(detections) else None
+            if detected is None:
+                items.append(
+                    ui.div(
+                        ui.strong(name),
+                        ui.p("The workbook could not be inspected."),
+                        class_="sheet-detection sheet-detection-error",
+                    )
+                )
+                continue
+            if detected.recommended is None:
+                if detected.candidates:
+                    closest = detected.candidates[0]
+                    detail = (
+                        f"Closest candidate: {closest.label}; missing "
+                        f"{', '.join(closest.missing_required)}."
+                    )
+                else:
+                    detail = "No plausible sheet or header row was found."
+                items.append(
+                    ui.div(
+                        ui.strong(name),
+                        ui.p(detail),
+                        class_="sheet-detection sheet-detection-error",
+                    )
+                )
+                continue
+            if detected.ambiguous:
+                choices = {
+                    candidate.key: candidate.label
+                    for candidate in detected.valid_candidates
+                }
+                items.append(
+                    ui.div(
+                        ui.strong(name),
+                        ui.p("Multiple sheets look like provisioning data. Choose one:"),
+                        ui.input_select(
+                            f"data_sheet_choice_{index}",
+                            "Raw-data sheet and header",
+                            choices,
+                            selected=detected.recommended.key,
+                        ),
+                        class_="sheet-detection sheet-detection-warning",
+                    )
+                )
+            else:
+                items.append(
+                    ui.div(
+                        ui.strong(name),
+                        ui.p(f"Detected: {detected.recommended.label}"),
+                        class_="sheet-detection sheet-detection-success",
+                    )
+                )
+        return ui.div(
+            ui.h5("Detected raw-data locations"),
+            *items,
+            class_="sheet-detections",
+        )
+
     @reactive.effect
     @reactive.event(input.run_analysis)
     def _run_analysis():
@@ -461,6 +569,11 @@ def server(input, output, session):
                 metadata,
                 transmitters or None,
                 source_names=upload_names(input.provisioning_file()),
+                sheet_selections=[
+                    selection
+                    for selection in current_sheet_selections()
+                    if selection is not None
+                ],
             )
         except Exception as exc:  # noqa: BLE001
             results.set(None)
