@@ -42,34 +42,11 @@ Then open the local link printed in the terminal, usually:
 http://127.0.0.1:8000
 ```
 
-## Windows Commands
+On Windows, activate the environment with:
 
-Open Command Prompt or PowerShell in this folder. The easiest way to create the
-environment, install the required packages, and start the app is:
-
-```bat
-.\run_app.bat
+```bash
+run_app.bat
 ```
-
-To run each setup step manually in Command Prompt, use:
-
-```bat
-py -3.12 -m venv .venv
-call .venv\Scripts\activate.bat
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python check_setup.py
-python -m shiny run --host 127.0.0.1 --port 8000 app.py
-```
-
-In PowerShell, activate the environment with this command instead:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-Then open `http://127.0.0.1:8000` in your browser. Use Python 3.11 if Python
-3.12 is not installed.
 
 ## If The Interface Does Not Launch
 
