@@ -1,125 +1,120 @@
-# Provisioning Analysis Dashboard
+# Provisioning Analysis Shiny App
 
-This Shiny app lets a user upload one or more raw provisioning files and generate the provisioning analysis without writing Python code.
+This bundle contains the files needed to run the uploadable provisioning
+analysis dashboard. It does not contain project source data.
 
-## What The App Does
+## Requirements
 
-After you upload the files and click **Run analysis**, the dashboard creates:
+- Python 3.11 or 3.12
+- Internet access during the initial package installation
 
-- data-quality summary;
-- mean prey delivered per hour;
-- diet composition summaries;
-- fish delivered per hour and fish per chick-hour;
-- tagged-parent versus untagged-parent provisioning summaries;
-- ambiguous parent-status review table;
-- downloadable CSV result package.
-- cross-year and cross-species comparisons;
-- selectable CSV and PNG figure downloads.
+## Setup
 
-## Files You Need
-
-The app asks you to upload these files in the browser:
-
-```text
-2025 PROVISIONING DATA ENTRY.xlsx
-PROV METADATA(Sheet1).csv
-Adult transmitter tagging banding data 2025 field season.xlsx
-```
-
-The adult transmitter file is optional, but Question 4 needs it.
-
-## Quick Start
+### macOS and Linux
 
 Open a terminal in this folder and run:
 
 ```bash
-./run_app.sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
-Then open the local link printed in the terminal, usually:
+### Windows PowerShell
+
+Open PowerShell in this folder and run:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+If PowerShell blocks the activation script, allow it for the current session
+and try again:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+### Windows Command Prompt
+
+Open Command Prompt in this folder and run:
+
+```bat
+py -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install -r requirements.txt
+```
+
+## Launch
+
+From this folder, run:
+
+```bash
+python -m shiny run --host 127.0.0.1 --port 8000 app.py
+```
+
+The same launch command works in Windows PowerShell and Command Prompt after
+the virtual environment has been activated:
+
+```powershell
+python -m shiny run --host 127.0.0.1 --port 8000 app.py
+```
+
+If the browser does not open automatically, visit:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-On Windows, activate the environment with:
+Stop the app with `Ctrl+C` in the terminal.
 
-```bash
-run_app.bat
-```
+You can also set up and launch the app with `./run_app.sh` on macOS or Linux,
+or `.\run_app.bat` on Windows.
 
-## If The Interface Does Not Launch
+## Using the app
 
-Run the setup check:
+1. Upload the provisioning workbook.
+2. Upload the provisioning metadata CSV.
+3. Optionally upload the adult transmitter workbook. Question 4 requires this
+   file for tagged-parent versus untagged-parent analysis.
+4. Review the file-validation messages.
+5. Select **Run analysis**.
+6. Review the data-quality, prey-rate, diet-composition, fish-rate, and
+   tagged-parent analysis tabs.
+7. Use the download buttons to save individual CSV tables or the complete ZIP
+   result package.
 
-```bash
-source .venv/bin/activate
-python check_setup.py
-```
+Uploads are temporary and remain isolated to the browser session. The app does
+not edit or save uploaded source files.
 
-The dashboard should use Python 3.11 or 3.12. Python 3.14 can make Pandas/Numpy imports stall on some machines.
+Zero-delivery monitored nest-stints are included in rate calculations. For
+tagged-parent matching, known transmitter PFR codes are classified as tagged;
+`NT`, `NOT TELEM`, `NO TELEM`, and `NON TELEM` are classified as untagged;
+blank or unresolved adult IDs are included in the review output.
 
-If setup is broken, recreate the environment with Python 3.12:
-
-```bash
-rm -rf .venv
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python check_setup.py
-python -m shiny run --host 127.0.0.1 --port 8000 app.py
-```
-
-## How To Use
-
-1. Choose a single-year, cross-year, or cross-species analysis.
-2. Upload one or more provisioning workbooks.
-3. Upload the shared metadata CSV.
-4. Upload adult transmitter workbooks if you want the tagged-status analysis.
-5. Check the validation messages and click **Generate analysis**.
-6. Use the global year and species controls to refine the comparison.
-7. Review the analysis tabs and choose CSVs or PNG figures from **Downloads**.
-
-For a cross-year comparison, select at least two yearly provisioning workbooks
-in the upload dialog. The app combines them for the current browser session and
-keeps their observation, stint, and delivery identifiers distinct.
-
-The raw-data worksheet does not need to be named `DATA ENTRY`, and historical
-column names may differ. For each workbook, choose the raw-data sheet and
-header-row number in the app, then map every required analysis field to the
-workbook's raw column. Exact-name columns are preselected automatically, and
-the workbook itself does not need to be edited.
-
-## Important Notes
-
-- Raw data files are not included in this GitHub bundle.
-- The app does not edit the uploaded raw files.
-- Zero-delivery monitored nest-stints are included in the rate calculations.
-- Tagged-parent matching uses the corrected TELEM/NT logic:
-  - known transmitter PFR code = tagged parent;
-  - `NT`, `NOT TELEM`, `NO TELEM`, `NON TELEM` = untagged parent;
-  - exact `TELEM` or `TELE ADULT` = generic tagged-parent label;
-  - blank or unreadable adult ID = unknown;
-  - unresolved labels = ambiguous review.
-
-## Folder Structure
+## Included files
 
 ```text
-app.py                  Shiny dashboard
-analysis/               Reusable analysis code
-scripts/clean_data.py   Cleaning logic
-data/raw/               Optional place to store local raw files
-docs/                   Longer implementation notes
-requirements.txt        Python packages
+provisioning_shiny_dashboard/
+├── README.md
+├── app.py
+├── check_setup.py
+├── requirements.txt
+├── run_app.bat
+├── run_app.sh
+├── analysis/
+│   ├── charts.py
+│   ├── core.py
+│   ├── statistics.py
+│   ├── tagged_parents.py
+│   └── validation.py
+├── data/
+│   └── raw/
+├── docs/
+│   └── SHINY_DASHBOARD_GUIDE.md
+└── scripts/
+    └── clean_data.py
 ```
-
-## Troubleshooting
-
-If package installation is slow or fails, try:
-
-```bash
-python -m pip install -r requirements.txt --no-cache-dir
-```
-
-If the app does not start, recreate the environment with Python 3.11 or 3.12.
